@@ -16,14 +16,16 @@
             :switched? true
             :overruled? true})))
 
+(defn test-component [{:keys [!log k]}]
+  (fn [config]
+    (swap! !log conj [:start k config])
+    (sut/->component [:started k]
+                     (fn []
+                       (swap! !log conj [:stop k])))))
+
 (t/deftest one-component-system
   (let [!log (atom [])
-        component-config {:config-key :value}
-        system-map {:component {:wiring/component (fn [config]
-                                                    (swap! !log conj [:start-component config])
-                                                    (sut/->component :started-component
-                                                                     (fn []
-                                                                       (swap! !log conj :stop-component))))
+        system-map {:component {:wiring/component (test-component {:!log !log, :k :component})
 
                                 :wiring/switches {:the-switch {:switched? true}
                                                   :not-this-one {:uh-oh? true}}
@@ -33,8 +35,23 @@
 
         started-system (sut/start-system system-map {:switches [:the-switch]})]
 
-    (t/is (= @!log [[:start-component {:config-key :value, :switched? true}]]))
+    (t/is (= @!log [[:start :component {:config-key :value, :switched? true}]]))
 
     (sut/stop-system started-system)
 
-    (t/is (= @!log [[:start-component {:config-key :value, :switched? true}] :stop-component]))))
+    (t/is (= @!log [[:start :component {:config-key :value, :switched? true}] [:stop :component]]))))
+
+(t/deftest dep-specs
+  (let [!log (atom [])
+        system-map {:c1 {:wiring/component (test-component {:!log !log, :k :c1})
+                         :wiring/deps [:c2]}
+
+                    :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}
+
+        started-system (sut/start-system system-map {:switches []})]
+
+    (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}]]))
+
+    (sut/stop-system started-system)
+
+    (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}] [:stop :c1] [:stop :c2]]))))
