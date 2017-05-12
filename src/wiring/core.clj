@@ -45,24 +45,48 @@
 
     {:component-order component-order
 
-     :components (reduce (fn [system k]
-                           (let [{component-fn :wiring/component, :keys [:wiring/deps], :as component-config} (get config k)
-                                 started-component (component-fn (-> component-config
-                                                                     (apply-switches {:switches switches})
-                                                                     (merge (into {}
-                                                                                  (map (fn [[k dep]]
-                                                                                         [k (:value (get system dep))]))
-                                                                                  deps))
+     :components (loop [[k & more-ks] component-order
+                        rollback-order []
+                        components {}]
+                   (if-not k
+                     components
 
-                                                                     (dissoc :wiring/component :wiring/switches :wiring/deps)))]
-                             (-> system
-                                 (assoc k (cond-> started-component
-                                            (not (instance? Component started-component)) ->component)))))
+                     (let [{component-fn :wiring/component, :keys [:wiring/deps], :as component-config} (get config k)
+                           {:keys [component error]} (try
+                                                       {:component (component-fn (-> component-config
+                                                                                     (apply-switches {:switches switches})
+                                                                                     (merge (into {}
+                                                                                                  (map (fn [[k dep]]
+                                                                                                         [k (:value (get components dep))]))
+                                                                                                  deps))
 
-                         {}
-                         component-order)}))
+                                                                                     (dissoc :wiring/component :wiring/switches :wiring/deps)))}
+                                                       (catch Exception e
+                                                         {:error e}))]
+                       (if component
+                         (recur more-ks
+                                (cons k rollback-order)
+                                (-> components
+                                    (assoc k (cond-> component
+                                               (not (instance? Component component)) ->component))))
+
+                         (do
+                           (doseq [k rollback-order]
+                             (let [{:keys [stop!]} (get components k)]
+                               (try
+                                 (stop!)
+                                 (catch Exception e
+                                   ;; TODO log
+                                   ))))
+
+                           (throw (ex-info "Error starting system" {:error error
+                                                                    :component k})))))))}))
 
 (defn stop-system [{:keys [components component-order] :as system}]
   (doseq [k (reverse component-order)]
     (let [{:keys [stop!]} (get components k)]
-      (stop!))))
+      (try
+        (stop!)
+        (catch Exception e
+          ;; TODO log
+          )))))

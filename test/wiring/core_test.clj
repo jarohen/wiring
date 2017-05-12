@@ -55,3 +55,21 @@
     (sut/stop-system started-system)
 
     (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}] [:stop :c1] [:stop :c2]]))))
+
+(t/deftest handles-component-fail
+  (let [!log (atom [])
+        system-map {:c1 {:wiring/component (fn [config]
+                                             (swap! !log conj [:start :c1 config])
+                                             (throw (ex-info "boom" {})))
+                         :wiring/deps [:c2]}
+
+                    :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}
+
+        started-system (try
+                         (sut/start-system system-map {:switches []})
+                         (throw (ex-info "shouldn't get here" {}))
+
+                         (catch Exception e
+                           (t/is (not= (.getMessage e) "shouldn't get here"))))]
+
+    (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}] [:stop :c2]]))))
