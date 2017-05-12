@@ -35,15 +35,29 @@
        d/topo-sort
        butlast))
 
-(defn start-component [{component-fn :wiring/component, :keys [wiring/deps] :as component-config} {:keys [components switches]}]
-  (component-fn (-> component-config
-                    (apply-switches {:switches switches})
-                    (merge (into {}
-                                 (map (fn [[k dep]]
-                                        [k (:value (get components dep))]))
-                                 deps))
+(defn resolve-component-fn [component-fn]
+  (if (symbol? component-fn)
+    (if-let [sym-ns (some-> (namespace component-fn) symbol)]
+      (or (do
+            (require sym-ns)
+            (ns-resolve (find-ns sym-ns) (symbol (name component-fn))))
 
-                    (dissoc :wiring/component :wiring/switches :wiring/deps))))
+          (throw (ex-info "Can't find :wiring/component sym" {:sym component-fn})))
+
+      (throw (ex-info ":wiring/component symbols must be fully qualified" {:sym component-fn})))
+
+    component-fn))
+
+(defn start-component [{:keys [wiring/deps] :as component-config} {:keys [components switches]}]
+  (let [component-fn (resolve-component-fn (:wiring/component component-config))]
+    (component-fn (-> component-config
+                      (apply-switches {:switches switches})
+                      (merge (into {}
+                                   (map (fn [[k dep]]
+                                          [k (:value (get components dep))]))
+                                   deps))
+
+                      (dissoc :wiring/component :wiring/switches :wiring/deps)))))
 
 (defn stop-system [{:keys [components component-order] :as system}]
   (doseq [k (reverse component-order)]
@@ -87,5 +101,4 @@
              (do
                (stop-system {:components components, :component-order started-components})
 
-               (throw (ex-info "Error starting system" {:error error
-                                                        :component k})))))))}))
+               (throw (ex-info "Error starting system" {:component k} error)))))))}))

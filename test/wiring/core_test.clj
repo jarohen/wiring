@@ -73,3 +73,10 @@
                            (t/is (not= (.getMessage e) "shouldn't get here"))))]
 
     (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}] [:stop :c2]]))))
+
+(defn mk-my-component [config]
+  {:ok? true})
+
+(t/deftest looks-up-component-fn-sym
+  (t/is (true? (-> (sut/start-system {:my-component {:wiring/component 'wiring.core-test/mk-my-component}} {})
+                   (get-in [:components :my-component :value :ok?])))))
