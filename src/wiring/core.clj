@@ -1,20 +1,20 @@
 (ns wiring.core
-  (:require [com.stuartsierra.dependency :as d]))
+  (:require [wiring.secret :as secret]
+            [com.stuartsierra.dependency :as d]
+            [clojure.walk :as w]))
 
-(defn noop [])
+(defn- noop [])
 
 (defrecord Component [value stop!])
 
-(defn ->component
-  ([value] (->component value noop))
-  ([value stop!] (->Component value stop!)))
+(defrecord Secret [key-id cipher-text])
 
-(defn apply-switches [config {:keys [switches]}]
+(defn- apply-switches [config {:keys [switches]}]
   (apply merge (dissoc config :wiring/switches)
          (for [switch switches]
            (get-in config [:wiring/switches switch]))))
 
-(defn normalise-deps [deps]
+(defn- normalise-deps [deps]
   (cond
     (map? deps) deps
     (vector? deps) (->> deps
@@ -24,7 +24,7 @@
                                   (keyword? dep) {dep dep})))
                         (apply merge))))
 
-(defn order-components [config]
+(defn- order-components [config]
   (->> config
        (reduce (fn [graph [k {:keys [wiring/deps]}]]
                  (reduce (fn [graph dep]
@@ -35,7 +35,7 @@
        d/topo-sort
        butlast))
 
-(defn resolve-component-fn [component-fn]
+(defn- resolve-component-fn [component-fn]
   (if (symbol? component-fn)
     (if-let [sym-ns (some-> (namespace component-fn) symbol)]
       (or (do
@@ -48,7 +48,7 @@
 
     component-fn))
 
-(defn start-component [{:keys [wiring/deps] :as component-config} {:keys [components switches]}]
+(defn- start-component [{:keys [wiring/deps] :as component-config} {:keys [components switches secret-keys]}]
   (let [component-fn (resolve-component-fn (:wiring/component component-config))]
     (component-fn (-> component-config
                       (apply-switches {:switches switches})
@@ -56,6 +56,15 @@
                                    (map (fn [[k dep]]
                                           [k (:value (get components dep))]))
                                    deps))
+
+                      (->> (w/postwalk (fn [v]
+                                         (if (instance? Secret v)
+                                           (let [{:keys [key-id cipher-text]} v]
+                                             (if-let [secret-key (get secret-keys key-id)]
+                                               (secret/decrypt cipher-text secret-key)
+                                               (throw (ex-info "missing secret-key" {:key-id key-id}))))
+
+                                           v))))
 
                       (dissoc :wiring/component :wiring/switches :wiring/deps)))))
 
@@ -68,7 +77,7 @@
           ;; TODO log
           )))))
 
-(defn start-system [config {:keys [switches]}]
+(defn start-system [config {:keys [switches secret-keys]}]
   (let [config (->> config
                     (into {}
                           (map (fn [[k component]]
@@ -88,7 +97,8 @@
          (let [component-config (get config k)
                {:keys [component error]} (try
                                            {:component (start-component component-config {:components components
-                                                                                          :switches switches})}
+                                                                                          :switches switches
+                                                                                          :secret-keys secret-keys})}
                                            (catch Exception e
                                              {:error e}))]
            (if component
@@ -96,7 +106,7 @@
                     (conj started-components k)
                     (-> components
                         (assoc k (cond-> component
-                                   (not (instance? Component component)) ->component))))
+                                   (not (instance? Component component)) (-> (->Component noop))))))
 
              (do
                (stop-system {:components components, :component-order started-components})

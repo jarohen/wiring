@@ -7,6 +7,7 @@
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [org.clojure/tools.namespace "0.2.11"]
                  [org.clojure/tools.logging "0.3.1"]
+                 [org.clojure/tools.reader "1.0.0-beta4"]
 
                  [camel-snake-kebab "0.4.0"]
                  [com.stuartsierra/dependency "0.2.0"]

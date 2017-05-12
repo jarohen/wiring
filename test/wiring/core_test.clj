@@ -1,17 +1,18 @@
 (ns wiring.core-test
   (:require [wiring.core :as sut]
+            [wiring.secret :as secret]
             [clojure.test :as t]))
 
 (t/deftest applies-switches
-  (t/is (= (sut/apply-switches {:wiring/switches {:the-switch {:switched? true
-                                                               :overruled? false}
-                                                  :other-switch {:overruled? true}
-                                                  :not-this-one {:uh-oh? true}}
+  (t/is (= (#'sut/apply-switches {:wiring/switches {:the-switch {:switched? true
+                                                                 :overruled? false}
+                                                    :other-switch {:overruled? true}
+                                                    :not-this-one {:uh-oh? true}}
 
-                                :config-key :value
-                                :switched? false}
+                                  :config-key :value
+                                  :switched? false}
 
-                               {:switches [:the-switch :other-switch]})
+                                 {:switches [:the-switch :other-switch]})
            {:config-key :value
             :switched? true
             :overruled? true})))
@@ -19,7 +20,7 @@
 (defn test-component [{:keys [!log k]}]
   (fn [config]
     (swap! !log conj [:start k config])
-    (sut/->component [:started k]
+    (sut/->Component [:started k]
                      (fn []
                        (swap! !log conj [:stop k])))))
 
@@ -80,3 +81,11 @@
 (t/deftest looks-up-component-fn-sym
   (t/is (true? (-> (sut/start-system {:my-component {:wiring/component 'wiring.core-test/mk-my-component}} {})
                    (get-in [:components :my-component :value :ok?])))))
+
+(t/deftest resolves-secrets
+  (let [secret-key (secret/generate-key)]
+    (t/is (= (-> (sut/start-system {:my-component {:wiring/component identity
+                                                   :password (sut/->Secret :my-key (secret/encrypt "password123" secret-key))}}
+                                   {:secret-keys {:my-key secret-key}})
+                 (get-in [:components :my-component :value :password]))
+             "password123"))))
