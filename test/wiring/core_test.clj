@@ -4,16 +4,20 @@
 
 (t/deftest one-component-system
   (let [!log (atom [])
-        started-system (sut/start-system {:component {:wiring/component (fn []
-                                                                          (swap! !log conj :start-component)
-                                                                          (sut/->component :started-component
-                                                                                           (fn []
-                                                                                             (swap! !log conj :stop-component))))}})]
+        component-config {:config-key :value}
+        system-map {:component (merge {:wiring/component (fn [config]
+                                                           (swap! !log conj [:start-component config])
+                                                           (sut/->component :started-component
+                                                                            (fn []
+                                                                              (swap! !log conj :stop-component))))}
+                                      component-config)}
 
-    (t/is (= @!log [:start-component]))
+        started-system (sut/start-system system-map)]
+
+    (t/is (= @!log [[:start-component component-config]]))
 
     (sut/stop-system started-system)
 
-    (t/is (= @!log [:start-component :stop-component]))
+    (t/is (= @!log [[:start-component component-config] :stop-component]))
 
     ))

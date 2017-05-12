@@ -7,8 +7,8 @@
   ([value stop!] (->Component value stop!)))
 
 (defn start-system [config]
-  (reduce (fn [system [k {:keys [wiring/component]}]]
-            (let [started-component (component)]
+  (reduce (fn [system [k {component-fn :wiring/component, :as component-config}]]
+            (let [started-component (component-fn (dissoc component-config :wiring/component))]
               (-> system
                   (assoc-in [:components k] (cond-> started-component
                                               (not (instance? Component started-component)) ->component))
