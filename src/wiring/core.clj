@@ -9,9 +9,13 @@
 (defrecord Secret [key-id cipher-text])
 
 (defn- apply-switches [config {:keys [switches]}]
-  (apply merge (dissoc config :wiring/switches)
+  (apply merge (dissoc config :wiring/switches :wiring/key)
          (for [switch switches]
-           (get-in config [:wiring/switches switch]))))
+           (if-let [switch-ns (some-> (namespace switch) keyword)]
+             (when (= switch-ns (:wiring/key config))
+               (get-in config [:wiring/switches (keyword (name switch))]))
+
+             (get-in config [:wiring/switches switch])))))
 
 (defn- normalise-deps [deps]
   (cond
@@ -47,7 +51,7 @@
 
     component-fn))
 
-(defn- start-component [{:keys [wiring/deps] :as component-config} {:keys [system switches secret-keys]}]
+(defn- start-component [{:keys [wiring/key wiring/deps] :as component-config} {:keys [system switches secret-keys]}]
   (let [component-fn (resolve-component-fn (:wiring/component component-config))]
     (component-fn (-> component-config
                       (apply-switches {:switches switches})
@@ -65,7 +69,7 @@
 
                                            v))))
 
-                      (dissoc :wiring/component :wiring/switches :wiring/deps)))))
+                      (dissoc :wiring/component :wiring/switches :wiring/deps :wiring/key)))))
 
 (defn stop-system [system]
   (doseq [stop! (:stop-fns (meta system))]
@@ -79,7 +83,9 @@
   (let [config (->> config
                     (into {}
                           (map (fn [[k component]]
-                                 [k (update component :wiring/deps normalise-deps)]))))
+                                 [k (-> component
+                                        (assoc :wiring/key k)
+                                        (update :wiring/deps normalise-deps))]))))
 
         component-order (order-components config)]
 

@@ -7,15 +7,18 @@
   (t/is (= (#'sut/apply-switches {:wiring/switches {:the-switch {:switched? true
                                                                  :overruled? false}
                                                     :other-switch {:overruled? true}
-                                                    :not-this-one {:uh-oh? true}}
+                                                    :not-this-one {:uh-oh? true}
+                                                    :component-switch {:component-too? true}}
+                                  :wiring/key :foo
 
                                   :config-key :value
                                   :switched? false}
 
-                                 {:switches [:the-switch :other-switch]})
+                                 {:switches [:the-switch :other-switch :foo/component-switch]})
            {:config-key :value
             :switched? true
-            :overruled? true})))
+            :overruled? true
+            :component-too? true})))
 
 (defn test-component [{:keys [!log k]}]
   (fn [config]
