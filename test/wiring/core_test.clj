@@ -80,12 +80,26 @@
 
 (t/deftest looks-up-component-fn-sym
   (t/is (true? (-> (sut/start-system {:my-component {:wiring/component 'wiring.core-test/mk-my-component}} {})
-                   (get-in [:components :my-component :value :ok?])))))
+                   (get-in [:my-component :ok?])))))
 
 (t/deftest resolves-secrets
   (let [secret-key (secret/generate-key)]
     (t/is (= (-> (sut/start-system {:my-component {:wiring/component identity
                                                    :password (sut/->Secret :my-key (secret/encrypt "password123" secret-key))}}
                                    {:secret-keys {:my-key secret-key}})
-                 (get-in [:components :my-component :value :password]))
+                 (get-in [:my-component :password]))
              "password123"))))
+
+(comment
+  (sut/defsystem api
+    {:my-component {:wiring/component (fn [config]
+                                        (prn "starting component")
+                                        (sut/->Component [:component config]
+                                                         (fn []
+                                                           (prn "stopping component"))))
+                    :username "james"}
+     :wiring/secret-keys {}})
+
+  (start-api!)
+  (stop-api!)
+  @!api)

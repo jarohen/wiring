@@ -1,9 +1,8 @@
 (ns wiring.core
   (:require [wiring.secret :as secret]
             [com.stuartsierra.dependency :as d]
+            [clojure.string :as s]
             [clojure.walk :as w]))
-
-(defn- noop [])
 
 (defrecord Component [value stop!])
 
@@ -48,13 +47,13 @@
 
     component-fn))
 
-(defn- start-component [{:keys [wiring/deps] :as component-config} {:keys [components switches secret-keys]}]
+(defn- start-component [{:keys [wiring/deps] :as component-config} {:keys [system switches secret-keys]}]
   (let [component-fn (resolve-component-fn (:wiring/component component-config))]
     (component-fn (-> component-config
                       (apply-switches {:switches switches})
                       (merge (into {}
                                    (map (fn [[k dep]]
-                                          [k (:value (get components dep))]))
+                                          [k (get system dep)]))
                                    deps))
 
                       (->> (w/postwalk (fn [v]
@@ -68,14 +67,13 @@
 
                       (dissoc :wiring/component :wiring/switches :wiring/deps)))))
 
-(defn stop-system [{:keys [components component-order] :as system}]
-  (doseq [k (reverse component-order)]
-    (let [{:keys [stop!]} (get components k)]
-      (try
-        (stop!)
-        (catch Exception e
-          ;; TODO log
-          )))))
+(defn stop-system [system]
+  (doseq [stop! (:stop-fns (meta system))]
+    (try
+      (stop!)
+      (catch Exception e
+        ;; TODO log
+        ))))
 
 (defn start-system [config {:keys [switches secret-keys]}]
   (let [config (->> config
@@ -85,30 +83,71 @@
 
         component-order (order-components config)]
 
-    {:component-order component-order
+    (loop [[k & more-ks] component-order
+           started-components []
+           system {}]
+      (if-not k
+        system
 
-     :components
-     (loop [[k & more-ks] component-order
-            started-components []
-            components {}]
-       (if-not k
-         components
+        (let [component-config (get config k)
+              {:keys [component error]} (try
+                                          {:component (start-component component-config {:system system
+                                                                                         :switches switches
+                                                                                         :secret-keys secret-keys})}
+                                          (catch Exception e
+                                            {:error e}))]
+          (if-let [{:keys [value stop!]} (when component
+                                           (if (instance? Component component)
+                                             component
+                                             (map->Component {:value component})))]
+            (recur more-ks
+                   (conj started-components k)
+                   (-> system
+                       (assoc k value)
+                       (cond-> stop! (vary-meta update :stop-fns conj stop!))))
 
-         (let [component-config (get config k)
-               {:keys [component error]} (try
-                                           {:component (start-component component-config {:components components
-                                                                                          :switches switches
-                                                                                          :secret-keys secret-keys})}
-                                           (catch Exception e
-                                             {:error e}))]
-           (if component
-             (recur more-ks
-                    (conj started-components k)
-                    (-> components
-                        (assoc k (cond-> component
-                                   (not (instance? Component component)) (-> (->Component noop))))))
+            (do
+              (stop-system system)
 
-             (do
-               (stop-system {:components components, :component-order started-components})
+              (throw (ex-info "Error starting system" {:component k} error)))))))))
 
-               (throw (ex-info "Error starting system" {:component k} error)))))))}))
+(defn start! [!system config {:keys [switches secret-keys] :as opts}]
+  (when-not (compare-and-set! !system nil ::starting)
+    (throw (ex-info "System already starting/started" {})))
+
+  (try
+    (reset! !system (start-system config opts))
+
+    (catch Exception e
+      (reset! !system nil)
+      (throw e))))
+
+(defn stop! [!system]
+  (let [system @!system]
+    (when (and (map? system)
+               (compare-and-set! !system system ::stopping))
+      (try
+        (stop-system system)
+        (finally
+          (reset! !system nil))))))
+
+(def env-switches
+  (vec (some-> (System/getenv "WIRING_SWITCHES")
+               (s/split #","))))
+
+(defmacro defsystem [name config]
+  (let [atom-sym (symbol (format "!%s-system"))]
+    `(do
+       (defonce ~atom-sym
+         (atom nil))
+
+       (defn ~(symbol (format "start-%s!" name)) []
+         (let [{switches# :wiring/switches, secret-keys# :wiring/secret-keys :or {switches# env-switches}, :as config#} ~config]
+           (start! ~atom-sym
+                   (dissoc ~config :wiring/switches :wiring/secret-keys)
+                   {:switches switches#, :secret-keys secret-keys#})))
+
+       (defn ~(symbol (format "stop-%s!" name)) []
+         (stop! ~atom-sym))
+
+       ~atom-sym)))
