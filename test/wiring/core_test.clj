@@ -93,6 +93,10 @@
                  (get-in [:my-component :password]))
              "password123"))))
 
+(t/deftest parses-switches
+  (t/is (= :db/live (#'sut/parse-switch "db/live")))
+  (t/is (= :live (#'sut/parse-switch "live"))))
+
 (comment
   (sut/defsystem api
     {:my-component {:wiring/component (fn [config]

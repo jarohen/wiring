@@ -137,9 +137,15 @@
         (finally
           (reset! !system nil))))))
 
+(defn- parse-switch [switch]
+  (if-let [[_ switch-ns switch-name] (re-matches #"(.+?)/(.+)" switch)]
+    (keyword switch-ns switch-name)
+    (keyword switch)))
+
 (def env-switches
-  (vec (some-> (System/getenv "WIRING_SWITCHES")
-               (s/split #","))))
+  (-> (System/getenv "WIRING_SWITCHES")
+      (some-> (s/split #","))
+      (->> (into [] (map parse-switch)))))
 
 (defmacro defsystem [name config]
   (let [atom-sym (symbol (format "!%s-system"))]
