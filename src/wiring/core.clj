@@ -52,24 +52,26 @@
     component-fn))
 
 (defn- start-component [{:keys [wiring/key wiring/deps] :as component-config} {:keys [system switches secret-keys]}]
-  (let [component-fn (resolve-component-fn (:wiring/component component-config))]
-    (component-fn (-> component-config
-                      (apply-switches {:switches switches})
-                      (merge (into {}
-                                   (map (fn [[k dep]]
-                                          [k (get system dep)]))
-                                   deps))
+  (let [resolved-config (-> component-config
+                            (apply-switches {:switches switches})
+                            (merge (into {}
+                                         (map (fn [[k dep]]
+                                                [k (get system dep)]))
+                                         deps))
 
-                      (->> (w/postwalk (fn [v]
-                                         (if (instance? Secret v)
-                                           (let [{:keys [key-id cipher-text]} v]
-                                             (if-let [secret-key (get secret-keys key-id)]
-                                               (secret/decrypt cipher-text secret-key)
-                                               (throw (ex-info "missing secret-key" {:key-id key-id}))))
+                            (->> (w/postwalk (fn [v]
+                                               (if (instance? Secret v)
+                                                 (let [{:keys [key-id cipher-text]} v]
+                                                   (if-let [secret-key (get secret-keys key-id)]
+                                                     (secret/decrypt cipher-text secret-key)
+                                                     (throw (ex-info "missing secret-key" {:key-id key-id}))))
 
-                                           v))))
+                                                 v))))
 
-                      (dissoc :wiring/component :wiring/switches :wiring/deps :wiring/key)))))
+                            (dissoc :wiring/component :wiring/switches :wiring/deps :wiring/key))]
+    (if-let [component-fn (resolve-component-fn (:wiring/component component-config))]
+      (component-fn resolved-config)
+      resolved-config)))
 
 (defn stop-system [system]
   (doseq [stop! (:stop-fns (meta system))]
