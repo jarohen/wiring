@@ -148,7 +148,7 @@
       (->> (into [] (map parse-switch)))))
 
 (defmacro defsystem [name config]
-  (let [atom-sym (symbol (format "!%s-system"))]
+  (let [atom-sym (symbol (format "!%s-system" name))]
     `(do
        (defonce ~atom-sym
          (atom nil))
