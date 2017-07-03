@@ -1,0 +1,270 @@
+* Wiring
+
+A Clojure library to handle the wiring between your configuration and your components.
+
+#+BEGIN_SRC clojure
+  [jarohen/wiring "0.0.1-alpha1"]
+#+END_SRC
+
+Wiring has been influenced by a number of projects - in particular, it can be
+thought of as a combination of Stuart Sierra's [[https://github.com/stuartsierra/component][Component]] and [[https://github.com/jarohen/nomad][Nomad]].
+
+** Usage
+
+Components in Wiring are created using =Component= records, which contain
+the started value of the component, and a function to tear the component down:
+
+#+BEGIN_SRC clojure
+  (:require [wiring.core :as w])
+
+  (defn make-my-component [props]
+    (let [db-pool (start-db-pool! props)]
+      (w/->Component db-pool
+                     (fn []
+                       (stop-db-pool! db-pool)))))
+
+#+END_SRC
+
+If you're familiar with Stuart Sierra's 'Component' library, the above example
+would translate into something like this:
+
+#+BEGIN_SRC clojure
+  (:require [com.stuartsierra.component :as c])
+
+  (defrecord MyComponent [props]
+    c/Lifecycle
+    (start [this]
+      (assoc this :db-pool (start-db-pool! props)))
+    (stop [{:keys [db-pool] :as this}]
+      (stop-db-pool! db-pool)
+      (dissoc this :db-pool)))
+#+END_SRC
+
+*** Wiring up a system
+
+Wiring systems are created using the =defsystem= macro. This creates a system
+atom, where the current state of the system is stored, and functions to start
+and stop the system.
+
+The simplest system map has no components, and its state will simply be the map
+you pass it:
+
+#+BEGIN_SRC clojure
+  (w/defsystem my-first-system
+    {:db {:host "localhost"
+          :port 5432}})
+#+END_SRC
+
+This creates three vars:
+- =!my-first-system= - an atom which holds the state of the current system
+- =start-my-first-system!= - a function to start the system
+- =stop-my-first-system!= - a function to stop the system
+
+Of course, given we haven't specified any start/stop behaviour, the started 'system' (if
+we can even call it that!) will just consist of the map we've passed:
+
+#+BEGIN_SRC clojure
+  ;; at the REPL:
+
+  (start-my-first-system!)
+  ;; => {:db {:host "localhost", :port 5432}}
+
+  @!my-first-system
+  ;; => {:db {:host "localhost", :port 5432}}
+
+  (stop-my-first-system!)
+  ;; => nil
+#+END_SRC
+
+That's not particularly exciting though! Let's add some behaviour using a
+=:wiring/component= key:
+
+#+BEGIN_SRC clojure
+  (w/defsystem my-system
+    {:db-pool {:wiring/component (fn [{:keys [host port]}]
+                                   (println "Starting DB pool...")
+
+                                   (let [db-pool (start-db-pool! {:host host, :port port})]
+                                     (w/->Component db-pool
+                                                    (fn []
+                                                      (println "Stopping DB pool...")
+                                                      (stop-db-pool! db-pool)))))
+               :host "localhost"
+               :port 5432}})
+#+END_SRC
+
+Now, when we start this system, it'll start our DB pool, and return it:
+
+#+BEGIN_SRC clojure
+  (start-my-system!)
+
+  ;; Starting DB pool...
+  ;; => {:db-pool <db-pool>}
+#+END_SRC
+
+Stopping the system behaves as you'd expect:
+
+#+BEGIN_SRC clojure
+  (stop-my-system!)
+  ;; Stopping DB pool...
+  ;; => nil
+#+END_SRC
+
+*** Introducing dependencies
+
+When we have more than one component in our system, we can specify dependencies
+between those components by giving them the value of =:wiring/dep=. When a
+dependent component starts, it is additionally passed the components that it
+depends on:
+
+#+BEGIN_SRC clojure
+  (w/defsystem my-system
+    {:db-pool {:wiring/component (fn [{:keys [host port]}]
+                                   (println "Starting DB pool...")
+
+                                   (let [db-pool (start-db-pool! {:host host, :port port})]
+                                     (w/->Component db-pool
+                                                    (fn []
+                                                      (println "Stopping DB pool...")
+                                                      (stop-db-pool! db-pool)))))
+               :host "localhost"
+               :port 5432}
+
+     :web-server {:wiring/component (fn [{:keys [port db-pool]}]
+                                      (println "Starting web server...")
+                                      (let [server (start-web-server! {:handler (make-handler {:db-pool db-pool})
+                                                                       :port port})]
+                                        (w/->Component server
+                                                       (fn []
+                                                         (println "Stopping web server...")
+                                                         (stop-web-server! server)))))
+                  :port 3000
+
+                  ;; we could rename the component by specifying `:my-db-pool [:wiring/dep :db-pool]`
+                  :db-pool :wiring/dep}})
+#+END_SRC
+
+*** Switches - varying the configuration in different environments
+The configuration that Wiring passes to your components can be switched
+depending on what environment your application is running in.
+
+We start by adding switches to our configuration, under the =:wiring/switches=
+key. Any values specified under a switch will override the default values when
+the switch is activated.
+
+#+BEGIN_SRC clojure
+  (w/defsystem my-system
+    {:db {:wiring/component (fn [{:keys [host user port]}]
+                              ;; ...
+                              )
+          :host "localhost"
+          :user "dev-user"
+          :port 5432
+          ;; ...
+          :wiring/switches {:live {:host "live-db.mycompany.com"
+                                   :user "live-user"
+                                   ;; ...
+                                   }}}
+
+     ;; (optional) manually specify which switches we want to activate
+     ;; although you probably want to use the `WIRING_SWITCHES` environment variable
+     :wiring/switches [:live]})
+#+END_SRC
+
+To activate a switch, we can either add a =:wiring/switches= vector to the top
+level system map - or, by default, Wiring will parse the =WIRING_SWITCHES=
+environment variable. You can specify multiple switches to activate, by
+separating each profile with a comma.
+
+**** Per-component switch activation:
+Switches can also be activated per-component, by qualifying the switch:
+
+#+BEGIN_SRC clojure
+  (w/defsystem my-system
+    {:db {:host "localhost"
+          ;; ...
+          :wiring/switches {:live {:host "live-db.mycompany.com"
+                                   ;; ...
+                                   }}}
+
+     :email {:behaviour :log-to-console
+             :wiring/switches {:live {:behaviour :send-emails}}}})
+#+END_SRC
+
+Starting this system with =WIRING_SWITCHES=email/live= will pass the development
+configuration to the =:db= component, but the live configuration to the =:email=
+component.
+
+*** Secrets
+
+Wiring can help you manage and distribute your configuration secrets securely.
+It allows you to encrypt credentials using one or more secret keys, and will
+then pass the decrypted credentials to your components when they start up.
+
+First, generate yourself a development key:
+
+#+BEGIN_SRC clojure
+  ;; at the REPL:
+
+  (require '[wiring.secret :as ws])
+
+  (ws/generate-key) ; dev key
+  ;; => "29d56819452120f102c080cb4f61781df63973d02759eefd5344ce57874de18f"
+
+  (ws/generate-key) ; live key
+  ;; => "4683f0025183c88bb6d9198f70184b40ceb7e4bafc4e25c0ff03141c6d3da082"
+#+END_SRC
+
+These keys should be stored separately, outside of source control, and distributed
+out-of-band where necessary:
+
+#+BEGIN_SRC clojure
+  ;; wiring-secret-keys.edn - don't forget to add this file to your .gitignore!
+  {:dev "29d56819452120f102c080cb4f61781df63973d02759eefd5344ce57874de18f"
+   :live "4683f0025183c88bb6d9198f70184b40ceb7e4bafc4e25c0ff03141c6d3da082"}
+#+END_SRC
+
+(It's not necessary to give all the keys to everyone if you don't want to -
+although Wiring will obviously throw an error if they try to decrypt using a key
+they don't have!)
+
+We can then encrypt our credentials using those keys, and include them in our
+system map:
+
+#+BEGIN_SRC clojure
+  ;; at the REPL:
+
+  (ws/encrypt "password123" "29d56819452120f102c080cb4f61781df63973d02759eefd5344ce57874de18f")
+  ;; => "bbe3425ab6235e2716d4e030876af51c47232dbeb8339bb3ada078c15e2788e3e4534fc5355343ff091d10554698e8a1"
+
+  ;; in your system map:
+
+  (w/defsystem my-system
+    {:db-pool {:wiring/component (fn [{:keys [host username password]}]
+                                   ;; `password` = "password123" in here
+
+                                   ;; ...
+                                   )
+
+               :host "..."
+               :username "..."
+               ;; we call `w/->Secret` with the name of the key, and the encrypted credentials
+               :password (w/->Secret :dev "bbe3425ab6235e2716d4e030876af51c47232dbeb8339bb3ada078c15e2788e3e4534fc5355343ff091d10554698e8a1")}
+
+     ;; add the secret keys under a `:wiring/secret-keys` key:
+     :wiring/secret-keys (read-string (slurp (io/file "wiring-secret-keys.edn")))})
+#+END_SRC
+
+This also composes with the 'switches' above, so it's possible to have one
+credential encrypted by a development key in development mode in one switch, and
+a different credential encrypted by a live key in live mode.
+
+** Bug reports/pull requests/comments/suggestions etc?
+
+Yes please! Please submit these in the traditional GitHub manner.
+
+** License
+
+Copyright © 2017 James Henderson
+
+Distributed under the Eclipse Public License, the same as Clojure.
