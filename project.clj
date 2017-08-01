@@ -1,4 +1,4 @@
-(defproject jarohen/wiring "0.0.1-alpha1"
+(defproject jarohen/wiring "0.0.1-alpha2"
   :description "A Clojure library to configure and wire-up component-based applications"
   :url "https://github.com/jarohen/wiring"
   :license {:name "Eclipse Public License"

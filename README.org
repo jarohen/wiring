@@ -3,7 +3,7 @@
 A Clojure library to handle the wiring between your configuration and your components.
 
 #+BEGIN_SRC clojure
-  [jarohen/wiring "0.0.1-alpha1"]
+  [jarohen/wiring "0.0.1-alpha2"]
 #+END_SRC
 
 Wiring has been influenced by a number of projects - in particular, it can be
