@@ -78,6 +78,16 @@
 
     (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}] [:stop :c2]]))))
 
+(def my-component-config
+  {:wiring/component (fn [config]
+                       (select-keys config [:foo]))
+   :foo :bar})
+
+(t/deftest looks-up-component-config-sym
+  (t/is (= :bar
+           (-> (sut/start-system {:my-component 'wiring.core-test/my-component-config} {})
+               (get-in [:my-component :foo])))))
+
 (defn mk-my-component [config]
   {:ok? true})
 

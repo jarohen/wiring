@@ -38,18 +38,19 @@
        d/topo-sort
        butlast))
 
-(defn- resolve-component-fn [component-fn]
-  (if (symbol? component-fn)
-    (if-let [sym-ns (some-> (namespace component-fn) symbol)]
+(defn- maybe-resolve-sym [maybe-sym]
+  (if (symbol? maybe-sym)
+    (if-let [sym-ns (some-> (namespace maybe-sym) symbol)]
       (or (do
             (require sym-ns)
-            (ns-resolve (find-ns sym-ns) (symbol (name component-fn))))
+            (some-> (ns-resolve (find-ns sym-ns) (symbol (name maybe-sym)))
+                    deref))
 
-          (throw (ex-info "Can't find :wiring/component sym" {:sym component-fn})))
+          (throw (ex-info "Can't find symbol" {:sym maybe-sym})))
 
-      (throw (ex-info ":wiring/component symbols must be fully qualified" {:sym component-fn})))
+      (throw (ex-info "Wiring symbols must be fully qualified" {:sym maybe-sym})))
 
-    component-fn))
+    maybe-sym))
 
 (defn- start-component [{:keys [wiring/key wiring/deps] :as component-config} {:keys [system switches secret-keys]}]
   (let [resolved-config (-> component-config
@@ -69,7 +70,7 @@
                                                  v))))
 
                             (dissoc :wiring/component :wiring/switches :wiring/deps :wiring/key))]
-    (if-let [component-fn (resolve-component-fn (:wiring/component component-config))]
+    (if-let [component-fn (some-> (:wiring/component component-config) maybe-resolve-sym)]
       (component-fn resolved-config)
       resolved-config)))
 
@@ -86,6 +87,7 @@
                     (into {}
                           (map (fn [[k component]]
                                  [k (-> component
+                                        maybe-resolve-sym
                                         (assoc :wiring/key k)
                                         (update :wiring/deps normalise-deps))]))))
 
