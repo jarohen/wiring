@@ -91,10 +91,6 @@
 (defn mk-my-component [config]
   {:ok? true})
 
-(t/deftest looks-up-component-fn-sym
-  (t/is (true? (-> (sut/start-system {:my-component {:wiring/component 'wiring.core-test/mk-my-component}} {})
-                   (get-in [:my-component :ok?])))))
-
 (t/deftest resolves-secrets
   (let [secret-key (secret/generate-key)]
     (t/is (= (-> (sut/start-system {:my-component {:wiring/component identity

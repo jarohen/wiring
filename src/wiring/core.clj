@@ -70,7 +70,7 @@
                                                  v))))
 
                             (dissoc :wiring/component :wiring/switches :wiring/deps :wiring/key))]
-    (if-let [component-fn (some-> (:wiring/component component-config) maybe-resolve-sym)]
+    (if-let [component-fn (:wiring/component component-config)]
       (component-fn resolved-config)
       resolved-config)))
 
