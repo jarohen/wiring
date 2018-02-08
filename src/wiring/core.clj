@@ -1,6 +1,7 @@
 (ns wiring.core
   (:require [wiring.secret :as secret]
             [com.stuartsierra.dependency :as d]
+            [clojure.set :as set]
             [clojure.string :as s]
             [clojure.walk :as w]))
 
@@ -8,14 +9,49 @@
 
 (defrecord Secret [key-id cipher-text])
 
-(defn- apply-switches [config {:keys [switches]}]
-  (apply merge (dissoc config :wiring/switches :wiring/key)
-         (for [switch switches]
-           (if-let [switch-ns (some-> (namespace switch) keyword)]
-             (when (= switch-ns (:wiring/key config))
-               (get-in config [:wiring/switches (keyword (name switch))]))
+(defmacro switch
+  "Takes a set of switch/expr clauses, and an optional default value.
+  Returns the configuration from the first active switch, or the default if none are active, or nil.
 
-             (get-in config [:wiring/switches switch])))))
+  (w/switch
+    <switch> <expr>
+    <switch-2> <expr-2>
+    ...
+    <default-expr>)"
+  {:style/indent 0}
+  [& clauses]
+
+  `(-> (fn [switches#]
+         (condp #(contains? %2 %1) switches#
+           ~@clauses
+           ~@(when (zero? (mod (count clauses) 2))
+               [nil])))
+       (with-meta {::switch? true})))
+
+(defn- apply-switches [{k :wiring/key, :as config} switches]
+  (let [switches (set/union switches
+                            (when k
+                              (into #{}
+                                    (keep (fn [switch]
+                                            (when (= (name k) (namespace switch))
+                                              (keyword (name switch)))))
+                                    switches)))]
+    (w/postwalk (fn [v]
+                  (if (::switch? (meta v))
+                    (v switches)
+                    v))
+                config)))
+
+(defn- apply-secrets [config secret-keys]
+  (w/postwalk (fn [v]
+                (if (instance? Secret v)
+                  (let [{:keys [key-id cipher-text]} v]
+                    (if-let [secret-key (get secret-keys key-id)]
+                      (secret/decrypt cipher-text secret-key)
+                      (throw (ex-info "missing secret-key" {:key-id key-id}))))
+
+                  v))
+              config))
 
 (defn- normalise-deps [deps]
   (cond
@@ -52,24 +88,19 @@
 
     maybe-sym))
 
+
+
 (defn- start-component [{:keys [wiring/key wiring/deps] :as component-config} {:keys [system switches secret-keys]}]
   (let [resolved-config (-> component-config
-                            (apply-switches {:switches switches})
+                            (apply-switches switches)
+                            (apply-secrets secret-keys)
                             (merge (into {}
                                          (map (fn [[k dep]]
                                                 [k (get system dep)]))
                                          deps))
 
-                            (->> (w/postwalk (fn [v]
-                                               (if (instance? Secret v)
-                                                 (let [{:keys [key-id cipher-text]} v]
-                                                   (if-let [secret-key (get secret-keys key-id)]
-                                                     (secret/decrypt cipher-text secret-key)
-                                                     (throw (ex-info "missing secret-key" {:key-id key-id}))))
-
-                                                 v))))
-
                             (dissoc :wiring/component :wiring/switches :wiring/deps :wiring/key))]
+
     (if-let [component-fn (:wiring/component component-config)]
       (component-fn resolved-config)
       resolved-config)))
@@ -140,6 +171,8 @@
         (stop-system system)
         (finally
           (reset! !system nil))))))
+
+
 
 (defn- parse-switch [switch]
   (if-let [[_ switch-ns switch-name] (re-matches #"(.+?)/(.+)" switch)]

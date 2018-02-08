@@ -4,21 +4,31 @@
             [clojure.test :as t]))
 
 (t/deftest applies-switches
-  (t/is (= (#'sut/apply-switches {:wiring/switches {:the-switch {:switched? true
-                                                                 :overruled? false}
-                                                    :other-switch {:overruled? true}
-                                                    :not-this-one {:uh-oh? true}
-                                                    :component-switch {:component-too? true}}
-                                  :wiring/key :foo
+  (t/is (= (#'sut/apply-switches {:wiring/key :foo
 
                                   :config-key :value
-                                  :switched? false}
 
-                                 {:switches [:the-switch :other-switch :foo/component-switch]})
-           {:config-key :value
+                                  :switched? (sut/switch
+                                               :the-switch true
+                                               false)
+
+                                  :overruled? (sut/switch
+                                                :other-switch true
+                                                :the-switch false)
+
+                                  :component-too? (sut/switch
+                                                    :component-switch true)
+
+                                  :uh-oh? (sut/switch
+                                            :not-this-one true)}
+
+                                 #{:the-switch :other-switch :foo/component-switch})
+           {:wiring/key :foo
+            :config-key :value
             :switched? true
             :overruled? true
-            :component-too? true})))
+            :component-too? true
+            :uh-oh? nil})))
 
 (defn test-component [{:keys [!log k]}]
   (fn [config]
@@ -31,19 +41,20 @@
   (let [!log (atom [])
         system-map {:component {:wiring/component (test-component {:!log !log, :k :component})
 
-                                :wiring/switches {:the-switch {:switched? true}
-                                                  :not-this-one {:uh-oh? true}}
-
                                 :config-key :value
-                                :switched? false}}
+                                :switched? (sut/switch
+                                             :the-switch true
+                                             false)
+                                :uh-oh? (sut/switch
+                                          :not-this-one true)}}
 
-        started-system (sut/start-system system-map {:switches [:the-switch]})]
+        started-system (sut/start-system system-map {:switches #{:the-switch}})]
 
-    (t/is (= @!log [[:start :component {:config-key :value, :switched? true}]]))
+    (t/is (= @!log [[:start :component {:config-key :value, :switched? true, :uh-oh? nil}]]))
 
     (sut/stop-system started-system)
 
-    (t/is (= @!log [[:start :component {:config-key :value, :switched? true}] [:stop :component]]))))
+    (t/is (= @!log [[:start :component {:config-key :value, :switched? true, :uh-oh? nil}] [:stop :component]]))))
 
 (t/deftest dep-specs
   (let [!log (atom [])
@@ -52,7 +63,7 @@
 
                     :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}
 
-        started-system (sut/start-system system-map {:switches []})]
+        started-system (sut/start-system system-map {:switches #{}})]
 
     (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}]]))
 
@@ -70,7 +81,7 @@
                     :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}
 
         started-system (try
-                         (sut/start-system system-map {:switches []})
+                         (sut/start-system system-map {:switches #{}})
                          (throw (ex-info "shouldn't get here" {}))
 
                          (catch Exception e

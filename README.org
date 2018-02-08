@@ -148,27 +148,33 @@ depends on:
 The configuration that Wiring passes to your components can be switched
 depending on what environment your application is running in.
 
-We start by adding switches to our configuration, under the =:wiring/switches=
-key. Any values specified under a switch will override the default values when
-the switch is activated.
+We start by adding switches to our configuration, using =w/switch=. =switch=
+behaves similarly to a normal Clojure =case= expr - checking which switches are
+active and returning the relevant config (or the default if none match)
 
 #+BEGIN_SRC clojure
   (w/defsystem my-system
-    {:db {:wiring/component (fn [{:keys [host user port]}]
+    {:db {:wiring/component (fn [{{:keys [host user port]} :db-config}]
                               ;; ...
                               )
-          :host "localhost"
-          :user "dev-user"
-          :port 5432
+
+          :db-config (merge {:port 5432}
+
+                            (w/switch
+                              :live {:host "live-db.mycompany.com"
+                                     :user "live-user"
+                                     ;; ...
+                                     }
+
+                              {:host "localhost"
+                               :user "dev-user"}))
+
           ;; ...
-          :wiring/switches {:live {:host "live-db.mycompany.com"
-                                   :user "live-user"
-                                   ;; ...
-                                   }}}
+          }
 
      ;; (optional) manually specify which switches we want to activate
      ;; although you probably want to use the `WIRING_SWITCHES` environment variable
-     :wiring/switches [:live]})
+     :wiring/switches #{:live}})
 #+END_SRC
 
 To activate a switch, we can either add a =:wiring/switches= vector to the top
@@ -181,14 +187,20 @@ Switches can also be activated per-component, by qualifying the switch:
 
 #+BEGIN_SRC clojure
   (w/defsystem my-system
-    {:db {:host "localhost"
-          ;; ...
-          :wiring/switches {:live {:host "live-db.mycompany.com"
-                                   ;; ...
-                                   }}}
+    {:db {:db-config (w/switch
+                       :live {:host "live-db.mycompany.com"
+                              ;; ...
+                              }
 
-     :email {:behaviour :log-to-console
-             :wiring/switches {:live {:behaviour :send-emails}}}})
+                       {:host "localhost"
+                        ;; ...
+                        })
+          ;; ...
+          }
+
+     :email {:behaviour (w/switch
+                          :live :send-emails
+                          :log-to-console)}})
 #+END_SRC
 
 Starting this system with =WIRING_SWITCHES=email/live= will pass the development
@@ -240,16 +252,16 @@ system map:
   ;; in your system map:
 
   (w/defsystem my-system
-    {:db-pool {:wiring/component (fn [{:keys [host username password]}]
+    {:db-pool {:wiring/component (fn [{{:keys [host username password]} :db-config}]
                                    ;; `password` = "password123" in here
 
                                    ;; ...
                                    )
 
-               :host "..."
-               :username "..."
-               ;; we call `w/->Secret` with the name of the key, and the encrypted credentials
-               :password (w/->Secret :dev "bbe3425ab6235e2716d4e030876af51c47232dbeb8339bb3ada078c15e2788e3e4534fc5355343ff091d10554698e8a1")}
+               :db-config {:host "..."
+                           :username "..."
+                           ;; we call `w/->Secret` with the name of the key, and the encrypted credentials
+                           :password (w/->Secret :dev "bbe3425ab6235e2716d4e030876af51c47232dbeb8339bb3ada078c15e2788e3e4534fc5355343ff091d10554698e8a1")}}
 
      ;; add the secret keys under a `:wiring/secret-keys` key:
      :wiring/secret-keys (read-string (slurp (io/file "wiring-secret-keys.edn")))})
@@ -265,6 +277,6 @@ Yes please! Please submit these in the traditional GitHub manner.
 
 ** License
 
-Copyright © 2017 James Henderson
+Copyright © 2017-2018 James Henderson
 
 Distributed under the Eclipse Public License, the same as Clojure.
