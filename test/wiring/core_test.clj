@@ -58,12 +58,12 @@
 
 (t/deftest dep-specs
   (let [!log (atom [])
-        system-map {:c1 {:wiring/component (test-component {:!log !log, :k :c1})
-                         :wiring/deps [:c2]}
+        started-system (sut/start-system {:wiring/deps #{:c1 :c2}
+                                          :wiring/overrides {:c1 {:wiring/component (test-component {:!log !log, :k :c1})
+                                                                  :c2 (sut/dep :c2)}
 
-                    :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}
-
-        started-system (sut/start-system system-map {:switches #{}})]
+                                                             :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}
+                                          :wiring/switches #{}})]
 
     (t/is (= @!log [[:start :c2 {}] [:start :c1 {:c2 [:started :c2]}]]))
 
@@ -73,15 +73,14 @@
 
 (t/deftest handles-component-fail
   (let [!log (atom [])
-        system-map {:c1 {:wiring/component (fn [config]
-                                             (swap! !log conj [:start :c1 config])
-                                             (throw (ex-info "boom" {})))
-                         :wiring/deps [:c2]}
-
-                    :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}
-
         started-system (try
-                         (sut/start-system system-map {:switches #{}})
+                         (sut/start-system {:wiring/deps #{:c1 :c2}
+                                            :wiring/overrides {:c1 {:wiring/component (fn [config]
+                                                                                        (swap! !log conj [:start :c1 config])
+                                                                                        (throw (ex-info "boom" {})))
+                                                                    :wiring/deps [:c2]}
+
+                                                               :c2 {:wiring/component (test-component {:!log !log, :k :c2})}}})
                          (throw (ex-info "shouldn't get here" {}))
 
                          (catch Exception e
@@ -96,8 +95,8 @@
 
 (t/deftest looks-up-component-config-sym
   (t/is (= :bar
-           (-> (sut/start-system {:my-component 'wiring.core-test/my-component-config} {})
-               (get-in [:my-component :foo])))))
+           (-> (sut/start-system {:wiring/deps #{'wiring.core-test/my-component-config}})
+               (get-in ['wiring.core-test/my-component-config :foo])))))
 
 (defn mk-my-component [config]
   {:ok? true})
@@ -115,14 +114,25 @@
   (t/is (= :live (#'sut/parse-switch "live"))))
 
 (comment
+  (sut/with-system {:wiring/deps #{#'foo}
+                    :wiring/overrides {#'foo {:wiring/component (fn [_]
+                                                                  (sut/->Component ,,,))}}
+                    :wiring/secret-keys {,,,}}
+    (fn [_]
+      ,,,))
+
+  (def my-component
+    {:wiring/component (fn [config]
+                         (prn "starting component")
+                         (sut/->Component [:component config]
+                                          (fn []
+                                            (prn "stopping component"))))
+     :username "james"})
+
   (sut/defsystem api
-    {:my-component {:wiring/component (fn [config]
-                                        (prn "starting component")
-                                        (sut/->Component [:component config]
-                                                         (fn []
-                                                           (prn "stopping component"))))
-                    :username "james"}
-     :wiring/secret-keys {}})
+    {:wiring/deps #{#'my-component}
+     :wiring/secret-keys {}
+     :wiring/overrides {,,,}})
 
   (start-api!)
   (stop-api!)
